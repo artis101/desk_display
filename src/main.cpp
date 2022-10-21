@@ -10,6 +10,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <Wire.h>
+#include <EEPROM.h>
 
 #include "srcsecrets.h"
 /**
@@ -29,6 +30,29 @@
 RTC_DATA_ATTR int bootCount = 0;
 
 static const unsigned long WIFI_TIMEOUT_MILLIS = 15000;
+
+#define EE_ADDRESS 0
+#define EEPROM_SIZE 1024
+
+struct DeviceSettings {
+  // device settings
+  bool settingsWritten;
+  bool wifiConfigured;
+  // network settings
+  char wifiSsid[32];
+  char wifiPassword[32];
+  uint8_t screenBrightness;
+  // NTP UTC offset in seconds
+  uint8_t ntpOffset;
+  char ntpAddress[128];
+  // intervals
+  uint8_t httpRequestInterval;
+  uint8_t autoSleepTimeout;
+  // debug settings
+  bool debugEnabled;
+};
+
+DeviceSettings deviceSettings;
 
 #define NTP_OFFSET 19800 // In seconds
 
@@ -114,7 +138,7 @@ void updateCurrentStep(void) {
       (currentStep > 0 && currentStep % MAX_STEPS == 0) ? 0 : currentStep + 1;
 }
 
-void displayWiFiIcon(boolean animate = false) {
+void displayWiFiIcon(bool animate = false) {
   long rssi = WiFi.RSSI();
 
   if ((!animate && rssi >= -67) || (animate && currentStep) >= 3) {
@@ -157,7 +181,7 @@ void displayWiFiIcon(boolean animate = false) {
 }
 
 void setupWiFi(const char *ssid, const char *password,
-               unsigned long rebootTimeoutMillis, boolean quiet = false) {
+               unsigned long rebootTimeoutMillis, bool quiet = false) {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
@@ -286,7 +310,7 @@ void apiSensorReadReqCb(void *cbVoidPtr, AsyncHTTPRequest *request,
   }
 }
 
-void displayClockRow(boolean draw = false) {
+void displayClockRow(bool draw = false) {
   formattedTime = timeClient.getFormattedTime();
   display.setFont(ArialMT_Plain_24);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
@@ -328,7 +352,7 @@ void animateSideLines(void) {
   }
 }
 
-void displaySensorRow(boolean draw = false) {
+void displaySensorRow(bool draw = false) {
   String sensorOutputFirstRow = String(insideTempSensorReading) + String("°C") +
                                 String(" | ") +
                                 String(outsideTempSensorReading) + String("°C");
@@ -365,7 +389,7 @@ String getDow(void) {
   }
 }
 
-void displayDateRow(boolean draw = false) {
+void displayDateRow(bool draw = false) {
   formattedDateTime = timeClient.getFormattedDate();
   int splitT = formattedDateTime.indexOf("T");
   formattedDate = formattedDateTime.substring(0, splitT);
@@ -434,21 +458,7 @@ void updateMainLoop(void) {
   display.display();
 }
 
-void touchInterruptCb(void) {}
-
-void setup(void) {
-  Serial.begin(115200);
-  // Increment boot number and print it every reboot
-  ++bootCount;
-  Serial.println(F("Hello Hacker!"));
-  Serial.println("Boot number: " + String(bootCount));
-
-  if (esp_sleep_enable_touchpad_wakeup() == ESP_OK) {
-    touchAttachInterrupt(TOUCH_PIN, touchInterruptCb, TOUCH_TRESHOLD);
-  } else {
-    Serial.print(F("Cannot enable deep sleep from touch!"));
-  }
-
+void initDisplay(void) {
   Serial.print(F("Initializing display..."));
   display.init();
   // lower brightness is better
@@ -458,8 +468,10 @@ void setup(void) {
   display.setFont(ArialMT_Plain_10);
   display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
   Serial.println(F("\tOK!"));
+}
 
-  boolean touchWakeup =
+void initWifiAndSleep(void) {
+  bool touchWakeup =
       esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TOUCHPAD;
 
   Serial.print(F("Connecting to WiFi"));
@@ -475,6 +487,25 @@ void setup(void) {
   }
 
   Serial.println(F("\tOK!"));
+}
+
+void touchInterruptCb(void) {}
+
+void setup(void) {
+  Serial.begin(115200);
+  // Increment boot number and print it every reboot
+  ++bootCount;
+  Serial.println(F("Hello Hacker!"));
+  Serial.println("Boot number: " + String(bootCount));
+
+  if (esp_sleep_enable_touchpad_wakeup() == ESP_OK) {
+    touchAttachInterrupt(TOUCH_PIN, touchInterruptCb, TOUCH_TRESHOLD);
+  } else {
+    Serial.print(F("Cannot enable deep sleep from touch!"));
+  }
+
+  initDisplay();
+  initWifiAndSleep();
 
   // set up time client and adjust GMT offset
   timeClient.begin();
