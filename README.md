@@ -7,7 +7,7 @@ An ESP32 dev module from China running Espressif Arduino framework, powered by P
 Specs:
 
 | Item  | Value  |
-|----------------|
+| -------------- |
 | CPU   | 240Mhz |
 | RAM   | 320KB  |
 | Flash | 4Mb    |
