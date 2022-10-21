@@ -68,8 +68,8 @@ String timeStamp;
 // JSON request variables
 #define SENSOR_RESPONSE_BUFFER_SIZE 4096
 uint8_t sensorResponseBuffer[SENSOR_RESPONSE_BUFFER_SIZE];
-char insideTempSensorReading[5] = "-.-";
-char outsideTempSensorReading[5] = "-.-";
+RTC_DATA_ATTR char insideTempSensorReading[5] = "-.-";
+RTC_DATA_ATTR char outsideTempSensorReading[5] = "-.-";
 
 #define HTTP_REQUEST_INTERVAL 60
 // poll every 100ms for user interaction
@@ -458,10 +458,21 @@ void setup(void) {
   display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
   Serial.println(F("\tOK!"));
 
+  boolean touchWakeup = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TOUCHPAD;
+
   Serial.print(F("Connecting to WiFi"));
-  setupWiFi(SSID, PASSWORD, WIFI_TIMEOUT_MILLIS);
+
+  if (touchWakeup) {
+    display.drawString(64, 32, F("Waking up..."));
+    displayWiFiIcon(true);
+    display.display();
+    setupWiFi(SSID, PASSWORD, WIFI_TIMEOUT_MILLIS, true);
+  } else {
+    setupWiFi(SSID, PASSWORD, WIFI_TIMEOUT_MILLIS, false);
+    delay(2000);
+  }
+
   Serial.println(F("\tOK!"));
-  delay(2000);
 
   // set up time client and adjust GMT offset
   timeClient.begin();
