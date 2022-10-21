@@ -17,13 +17,16 @@
  *
   static const PROGMEM char SSID[] = "ssid";
   static const PROGMEM char PASSWORD[] = "password";
-  static const PROGMEM char API_URL[] = "http://homeassistant.ip:8123/api/states/";
+  static const PROGMEM char API_URL[] =
+ "http://homeassistant.ip:8123/api/states/";
 
   static const PROGMEM char AUTH_HEADER[] = " Bearer MyToken";
 
   static const PROGMEM char IN_SENSOR_ID[] = "sensor.id";
   static const PROGMEM char OUT_SENSOR_ID[] = "sensor.id";
 */
+
+RTC_DATA_ATTR int bootCount = 0;
 
 static const unsigned long WIFI_TIMEOUT_MILLIS = 15000;
 
@@ -43,19 +46,10 @@ NTPClient timeClient(ntpUDP, NTP_ADDRESS, NTP_OFFSET, NTP_INTERVAL);
 
 SSD1306Wire display(OLED_ROTATION, OLED_SDA, OLED_SCL); // ADDRESS, SDA, SCL
 
-#define HTTP_REQUEST_INTERVAL 60 // 300
 #define _ASYNC_HTTP_LOGLEVEL_ 0
 AsyncHTTPRequest inTempRequest;
-Ticker inTempRequestTicker;
 AsyncHTTPRequest outTempRequest;
-Ticker outTempRequestTicker;
 AsyncHTTPRequest stockPriceRequest;
-Ticker stockPriceRequestTicker;
-
-// counter from 0 to 3 that resets itself
-uint8_t currentStep = 0;
-// for millis() based updates
-unsigned long lastUpdate = 0;
 
 StaticJsonDocument<48> sensorDoc;
 StaticJsonDocument<16> sensorValueFilter;
@@ -63,8 +57,6 @@ StaticJsonDocument<16> sensorValueFilter;
 StaticJsonDocument<96> outSensorDoc;
 StaticJsonDocument<32> outSensorValueFilter;
 
-static const PROGMEM char SEPERATOR_HYPHEN[] = " - ";
-static const PROGMEM char SEPERATOR_PIPE[] = " | ";
 static const PROGMEM char SENSOR_UNAVAILABLE_STR[] = "unavailable";
 static const PROGMEM char SENSOR_NO_VALUE_STR[] = "-.-";
 
@@ -79,9 +71,35 @@ uint8_t sensorResponseBuffer[SENSOR_RESPONSE_BUFFER_SIZE];
 char insideTempSensorReading[5] = "-.-";
 char outsideTempSensorReading[5] = "-.-";
 
+#define HTTP_REQUEST_INTERVAL 60
+// poll every 100ms for user interaction
+#define UI_LOOP_INTERVAL 0.1
+#define MAIN_EVENT_LOOP_INTERVAL 0.5
+// API calls every 60 seconds that update the data
+Ticker inTempRequestTicker;
+Ticker outTempRequestTicker;
+Ticker stockPriceRequestTicker;
+
+#define TOUCH_PIN T0
+#define TOUCH_TRESHOLD 100 // touch is below 100
+
+bool showActivityIndicator = false;
+
+// counter from 0 to 3 that resets itself
+uint8_t currentStep = 0;
+#define MAX_STEPS 3
+// tracks how long touches are
+unsigned long lastTouchStart = 0;
+// hold for about 5 seconds to sleep
+#define TOUCH_INVERT_SRC_THRESHOLD 4750
+
+// draws on display and updates clock every 0.5s
+Ticker mainEventLoop;
+// updates every 100ms grab user interaction events
+Ticker uiLoop;
+
 void setupWiFi(const char *ssid, const char *password,
                unsigned long rebootTimeoutMillis) {
-  Serial.print(F("Connecting to WiFi"));
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
@@ -97,9 +115,6 @@ void setupWiFi(const char *ssid, const char *password,
       display.clear();
       display.drawString(64, 32, F("WiFi connected!"));
       display.display();
-      Serial.println(
-          F("WiFi setup successful! Booting device into loop in 2000ms"));
-      delay(2000);
       break;
     }
 
@@ -108,8 +123,9 @@ void setupWiFi(const char *ssid, const char *password,
       display.clear();
       display.drawString(64, 32, F("WiFi setup FAIL, reboot in 5s"));
       display.display();
+      Serial.println(F(""));
       Serial.println(
-          F("WiFi connection failed... Restart the device and try again"));
+          F("WiFi connection failed... Restart the device and try again!"));
       delay(5000);
       ESP.restart();
     }
@@ -147,95 +163,66 @@ void sendOutTempSensorApiRequest(void) {
   sendApiRequest(&outTempRequest, OUT_SENSOR_ID);
 }
 
-void apiInSensorReadReqCb(void *cbVoidPtr, AsyncHTTPRequest *request,
-                          int readyState) {
+void handleInSensorOkResponse(void *cbVoidPtr, AsyncHTTPRequest *request) {
   char *readingStringPtr = (char *)cbVoidPtr;
 
-  if (readyState == readyStateDone) {
-    if (request->responseHTTPcode() == 200) {
-      request->responseRead(sensorResponseBuffer, SENSOR_RESPONSE_BUFFER_SIZE);
+  request->responseRead(sensorResponseBuffer, SENSOR_RESPONSE_BUFFER_SIZE);
 
-      DeserializationError error =
-          deserializeJson(sensorDoc, sensorResponseBuffer,
-                          DeserializationOption::Filter(sensorValueFilter));
+  DeserializationError error =
+      deserializeJson(sensorDoc, sensorResponseBuffer,
+                      DeserializationOption::Filter(sensorValueFilter));
 
-      if (error) {
-        Serial.print(F("deserializeJson() failed: "));
-        Serial.println(error.f_str());
-      } else {
-        auto state = sensorDoc["state"].as<const char *>();
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
 
-        if (state == SENSOR_UNAVAILABLE_STR) {
-          strncpy(readingStringPtr, SENSOR_NO_VALUE_STR,
-                  strlen(SENSOR_NO_VALUE_STR));
-        } else {
-          strncpy(readingStringPtr, state, strlen(state));
-        }
-      }
-    }
+  auto state = sensorDoc["state"].as<const char *>();
+
+  if (state == SENSOR_UNAVAILABLE_STR) {
+    strncpy(readingStringPtr, SENSOR_NO_VALUE_STR, strlen(SENSOR_NO_VALUE_STR));
+  } else {
+    strncpy(readingStringPtr, state, strlen(state));
   }
 }
 
-// ugly hack, but repeating code costs less RAM
-void apiOutSensorReadReqCb(void *cbVoidPtr, AsyncHTTPRequest *request,
-                           int readyState) {
+void handleOutSensorOkResponse(void *cbVoidPtr, AsyncHTTPRequest *request) {
   char *readingStringPtr = (char *)cbVoidPtr;
 
-  if (readyState == readyStateDone) {
-    if (request->responseHTTPcode() == 200) {
-      request->responseRead(sensorResponseBuffer, 2048);
+  request->responseRead(sensorResponseBuffer, SENSOR_RESPONSE_BUFFER_SIZE);
 
-      DeserializationError error =
-          deserializeJson(outSensorDoc, sensorResponseBuffer,
-                          DeserializationOption::Filter(outSensorValueFilter));
+  DeserializationError error =
+      deserializeJson(outSensorDoc, sensorResponseBuffer,
+                      DeserializationOption::Filter(outSensorValueFilter));
 
-      if (error) {
-        Serial.print(F("deserializeJson() failed: "));
-        Serial.println(error.f_str());
-      } else {
-        auto tempFloat = outSensorDoc["attributes"]["temperature"].as<float>();
-        char buffer[6]; // xx.yy + \0
-        sprintf(buffer, "%0g", tempFloat);
-        strncpy(readingStringPtr, buffer, strlen(buffer));
-      }
-    }
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
   }
+
+  auto tempFloat = outSensorDoc["attributes"]["temperature"].as<float>();
+  char buffer[5]; // xx.y + \0
+  sprintf(buffer, "%1g", tempFloat);
+  strncpy(readingStringPtr, buffer, strlen(buffer));
 }
 
-void setup(void) {
-  Serial.begin(115200);
-  Serial.println(F("Starting..."));
-  Serial.println();
+void apiSensorReadReqCb(void *cbVoidPtr, AsyncHTTPRequest *request,
+                        int readyState) {
+  if (readyState == readyStateDone) {
+    showActivityIndicator = false;
 
-  display.init();
-  // clear the display
-  display.clear();
-  display.flipScreenVertically();
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
-  Serial.println(F("Display initialized, connecting to WiFi"));
-
-  setupWiFi(SSID, PASSWORD, WIFI_TIMEOUT_MILLIS);
-
-  // set up time client and adjust GMT offset
-  timeClient.begin();
-  // GMT +3 = 3600 * 3
-  timeClient.setTimeOffset(3600 * 3);
-
-  // set up requestJSON filters and request ticker
-  sensorValueFilter["state"] = true;
-  outSensorValueFilter["attributes"]["temperature"] = true;
-  // set up the requests we will be making
-  inTempRequest.onReadyStateChange(apiInSensorReadReqCb,
-                                   &insideTempSensorReading);
-  inTempRequestTicker.attach(HTTP_REQUEST_INTERVAL, sendInTempSensorApiRequest);
-  sendInTempSensorApiRequest();
-
-  outTempRequest.onReadyStateChange(apiOutSensorReadReqCb,
-                                    &outsideTempSensorReading);
-  outTempRequestTicker.attach(HTTP_REQUEST_INTERVAL,
-                              sendOutTempSensorApiRequest);
-  sendOutTempSensorApiRequest();
+    if (request->responseHTTPcode() == 200) {
+      if (request == &inTempRequest) {
+        handleInSensorOkResponse(cbVoidPtr, request);
+      } else if (request == &outTempRequest) {
+        handleOutSensorOkResponse(cbVoidPtr, request);
+      }
+    }
+  } else {
+    showActivityIndicator = true;
+  }
 }
 
 void displayClockRow(boolean draw = false) {
@@ -243,9 +230,6 @@ void displayClockRow(boolean draw = false) {
   display.setFont(ArialMT_Plain_24);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.drawString(64, 0, formattedTime);
-
-  if (draw)
-    display.display();
 }
 
 void drawl2o4(void) {
@@ -296,12 +280,7 @@ void displaySensorRow(boolean draw = false) {
   display.drawString(64, 26, sensorOutputFirstRow);
   display.drawString(64, 38, sensorOutputSecondRow);
   // draw bottom line
-  display.drawLine(25, 53, 103, 53);
-
-  animateSideLines();
-
-  if (draw)
-    display.display();
+  display.drawLine(25, 51, 103, 51);
 }
 
 String getDow(void) {
@@ -321,7 +300,7 @@ String getDow(void) {
   case 6:
     return F("Sat");
   default:
-    return F("UNKNOWN");
+    return F("UNK");
   }
 }
 
@@ -329,15 +308,45 @@ void displayDateRow(boolean draw = false) {
   formattedDateTime = timeClient.getFormattedDate();
   int splitT = formattedDateTime.indexOf("T");
   formattedDate = formattedDateTime.substring(0, splitT);
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(64, 54,
-                     String(formattedDate + String(SEPERATOR_PIPE) + getDow()));
 
-  if (draw)
-    display.display();
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(64, 51, String(formattedDate + F("   ") + getDow()));
+  // draw separator line
+  display.drawLine(85, 51, 85, 64);
 }
 
-void loop(void) {
+void processLongTouch(void) {
+  if (touchRead(TOUCH_PIN) < TOUCH_TRESHOLD) {
+    showActivityIndicator = true;
+
+    if (lastTouchStart == 0) { // register touch
+      lastTouchStart = millis();
+    }
+
+    unsigned long currMillis = millis();
+    unsigned long touchDuration = currMillis - lastTouchStart;
+
+    if (touchDuration > TOUCH_INVERT_SRC_THRESHOLD) {
+      display.clear();
+      display.setFont(ArialMT_Plain_10);
+      display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
+      display.drawString(64, 32, F("Sleeping in 3 seconds"));
+      display.display();
+      delay(3000);
+      display.displayOff();
+      Serial.println(F("Going to sleep now"));
+      esp_deep_sleep_start();
+    }
+  } else {
+    showActivityIndicator = false;
+    lastTouchStart = 0;
+  }
+}
+
+void processInteractions(void) { processLongTouch(); }
+
+void updateMainLoop(void) {
   while (!timeClient.update()) {
     timeClient.forceUpdate();
   }
@@ -348,9 +357,70 @@ void loop(void) {
   displaySensorRow();
   displayDateRow();
 
+  if (showActivityIndicator)
+    animateSideLines();
+
   display.display();
 
-  currentStep = (currentStep > 0 && currentStep % 3 == 0) ? 0 : currentStep + 1;
-
-  delay(500);
+  // important update step every time
+  currentStep =
+      (currentStep > 0 && currentStep % MAX_STEPS == 0) ? 0 : currentStep + 1;
 }
+
+void touchInterruptCb(void) {}
+
+void setup(void) {
+  Serial.begin(115200);
+  // Increment boot number and print it every reboot
+  ++bootCount;
+  Serial.println(F("Hello Hacker!"));
+  Serial.println("Boot number: " + String(bootCount));
+
+  if (esp_sleep_enable_touchpad_wakeup() == ESP_OK) {
+    touchAttachInterrupt(TOUCH_PIN, touchInterruptCb, TOUCH_TRESHOLD);
+  } else {
+    Serial.print(F("Cannot enable deep sleep from touch!"));
+  }
+
+  Serial.print(F("Initializing display..."));
+  display.init();
+  // lower brightness is better
+  display.setBrightness(32);
+  display.clear();
+  display.flipScreenVertically();
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
+  Serial.println(F("\tOK!"));
+
+  Serial.print(F("Connecting to WiFi"));
+  setupWiFi(SSID, PASSWORD, WIFI_TIMEOUT_MILLIS);
+  Serial.println(F("\tOK!"));
+  delay(2000);
+
+  // set up time client and adjust GMT offset
+  timeClient.begin();
+  // GMT +3 = 3600 * 3
+  timeClient.setTimeOffset(3600 * 3);
+
+  uiLoop.attach(UI_LOOP_INTERVAL, processInteractions);
+  mainEventLoop.attach(MAIN_EVENT_LOOP_INTERVAL, updateMainLoop);
+
+  Serial.print(F("Fetching data..."));
+  // set up requestJSON filters and request ticker
+  sensorValueFilter["state"] = true;
+  outSensorValueFilter["attributes"]["temperature"] = true;
+  // set up the requests we will be making
+  inTempRequest.onReadyStateChange(apiSensorReadReqCb,
+                                   &insideTempSensorReading);
+  inTempRequestTicker.attach(HTTP_REQUEST_INTERVAL, sendInTempSensorApiRequest);
+
+  outTempRequest.onReadyStateChange(apiSensorReadReqCb,
+                                    &outsideTempSensorReading);
+  outTempRequestTicker.attach(HTTP_REQUEST_INTERVAL,
+                              sendOutTempSensorApiRequest);
+  sendInTempSensorApiRequest();
+  sendOutTempSensorApiRequest();
+  Serial.println(F("\tOK!"));
+}
+
+void loop(void) {}
