@@ -43,13 +43,13 @@ An ideal storm was brewing. I was mildly sick, bored and had a couple of long-fo
 Clone this project and open it as a Platform.io project. Create a `srcsecrets.h` file under `src/` directory and set your own values for SSID, WiFi password, HomeAssistant API URL(SSL is supported), HTTP Auth header and HomeAssistant Entity ID's:
 
 ```
-  static const PROGMEM char SSID[] = "ssid";
-  static const PROGMEM char PASSWORD[] = "password";
-  static const PROGMEM char API_URL[] =
- "http://homeassistant.ip:8123/api/states/";
+static const PROGMEM char SSID[] = "ssid";
+static const PROGMEM char PASSWORD[] = "password";
+static const PROGMEM char API_URL[] =
+"http://homeassistant.ip:8123/api/states/";
 
-  static const PROGMEM char AUTH_HEADER[] = " Bearer MyToken";
+static const PROGMEM char AUTH_HEADER[] = " Bearer MyToken";
 
-  static const PROGMEM char IN_SENSOR_ID[] = "sensor.id";
-  static const PROGMEM char OUT_SENSOR_ID[] = "sensor.id";
+static const PROGMEM char IN_SENSOR_ID[] = "sensor.id";
+static const PROGMEM char OUT_SENSOR_ID[] = "sensor.id";
 ```
