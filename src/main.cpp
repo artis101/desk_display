@@ -392,9 +392,9 @@ void processLongTouch(void) {
       display.clear();
       display.setFont(ArialMT_Plain_10);
       display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
-      display.drawString(64, 32, F("Sleeping in 3 seconds"));
+      display.drawString(64, 32, F("Turning off..."));
       display.display();
-      delay(3000);
+      delay(2000);
       display.displayOff();
       Serial.println(F("Going to sleep now"));
       esp_deep_sleep_start();
