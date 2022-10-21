@@ -93,13 +93,53 @@ unsigned long lastTouchStart = 0;
 // hold for about 5 seconds to sleep
 #define TOUCH_INVERT_SRC_THRESHOLD 4750
 
+// UI elements
+static const uint8_t WIFI_ICON_DOT_X = 8;
+static const uint8_t WIFI_ICON_DOT_Y = 15;
+
 // draws on display and updates clock every 0.5s
 Ticker mainEventLoop;
 // updates every 100ms grab user interaction events
 Ticker uiLoop;
 
+void displayWiFiTimeout(void) {
+  display.clear();
+  display.drawString(64, 32, F("WiFi setup failed, restarting in 5s!"));
+  display.display();
+}
+
+void updateCurrentStep(void) {
+  // important update step every time
+  currentStep =
+      (currentStep > 0 && currentStep % MAX_STEPS == 0) ? 0 : currentStep + 1;
+}
+
+void displayWiFiIcon(boolean animate = false) {
+  long rssi = WiFi.RSSI();
+
+  if ((!animate && rssi >= -67) || (animate && currentStep) >= 3) {
+    display.drawLine(2, 7, 3, 7);   // dot top left line
+    display.drawLine(4, 6, 13, 6);  // dot top middle line
+    display.drawLine(14, 7, 15, 7); // dot top right line
+  }
+
+  if ((!animate && rssi >= -70) || (animate && currentStep) >= 2) {
+    display.drawLine(4, 10, 5, 10);   // dot mid left line
+    display.drawLine(6, 9, 11, 9);    // dot mid middle line
+    display.drawLine(12, 10, 13, 10); // dot mid right line
+  }
+
+  if ((!animate && rssi >= -80) || (animate && currentStep) >= 1) {
+    display.drawLine(5, 13, 6, 13);   // dot lower left line
+    display.drawLine(7, 12, 10, 12);  // dot lower middle line
+    display.drawLine(11, 13, 12, 13); // dot lower right line
+  }
+
+  display.fillRect(WIFI_ICON_DOT_X, WIFI_ICON_DOT_Y, 2, 2); // the dot
+}
+
 void setupWiFi(const char *ssid, const char *password,
-               unsigned long rebootTimeoutMillis) {
+               unsigned long rebootTimeoutMillis, boolean quiet = false) {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
@@ -107,30 +147,33 @@ void setupWiFi(const char *ssid, const char *password,
   while (true) {
     Serial.print('.');
 
-    display.clear();
-    display.drawString(64, 32, F("WiFi setup..."));
-    display.display();
-
-    if (WiFi.status() == WL_CONNECTED) {
+    if (!quiet) {
       display.clear();
-      display.drawString(64, 32, F("WiFi connected!"));
+      displayWiFiIcon(true);
+      display.drawString(64, 32, F("WiFi connecting..."));
       display.display();
-      break;
     }
 
     unsigned long nowMillis = millis();
     if ((unsigned long)(nowMillis - startMillis) >= rebootTimeoutMillis) {
-      display.clear();
-      display.drawString(64, 32, F("WiFi setup FAIL, reboot in 5s"));
-      display.display();
       Serial.println(F(""));
-      Serial.println(
-          F("WiFi connection failed... Restart the device and try again!"));
+      Serial.println(F("WiFi setup failed, restarting in 5s!"));
+      displayWiFiTimeout();
       delay(5000);
       ESP.restart();
     }
 
-    delay(500);
+    if (WiFi.status() == WL_CONNECTED) {
+      if (!quiet) {
+        display.clear();
+        display.drawString(64, 32, F("WiFi connected!"));
+        display.display();
+      }
+      break;
+    } else {
+      updateCurrentStep();
+      delay(500);
+    }
   }
 }
 
@@ -360,11 +403,16 @@ void updateMainLoop(void) {
   if (showActivityIndicator)
     animateSideLines();
 
-  display.display();
+  updateCurrentStep();
 
-  // important update step every time
-  currentStep =
-      (currentStep > 0 && currentStep % MAX_STEPS == 0) ? 0 : currentStep + 1;
+  if (!WiFi.isConnected()) {
+    displayWiFiIcon(true);
+    setupWiFi(SSID, PASSWORD, WIFI_TIMEOUT_MILLIS, true);
+  } else {
+    displayWiFiIcon(false);
+  }
+
+  display.display();
 }
 
 void touchInterruptCb(void) {}
