@@ -94,8 +94,8 @@ unsigned long lastTouchStart = 0;
 #define TOUCH_INVERT_SRC_THRESHOLD 4750
 
 // UI elements
-static const uint8_t WIFI_ICON_DOT_X = 8;
-static const uint8_t WIFI_ICON_DOT_Y = 15;
+static const uint8_t WIFI_ICON_DOT_X = 12;
+static const uint8_t WIFI_ICON_DOT_Y = 41;
 
 // draws on display and updates clock every 0.5s
 Ticker mainEventLoop;
@@ -118,21 +118,39 @@ void displayWiFiIcon(boolean animate = false) {
   long rssi = WiFi.RSSI();
 
   if ((!animate && rssi >= -67) || (animate && currentStep) >= 3) {
-    display.drawLine(2, 7, 3, 7);   // dot top left line
-    display.drawLine(4, 6, 13, 6);  // dot top middle line
-    display.drawLine(14, 7, 15, 7); // dot top right line
+    display.drawLine(WIFI_ICON_DOT_X - 6, WIFI_ICON_DOT_Y - 8,
+                     WIFI_ICON_DOT_X - 5,
+                     WIFI_ICON_DOT_Y - 8); // dot top left line
+    display.drawLine(WIFI_ICON_DOT_X - 4, WIFI_ICON_DOT_Y - 9,
+                     WIFI_ICON_DOT_X + 5,
+                     WIFI_ICON_DOT_Y - 9); // dot top middle line
+    display.drawLine(WIFI_ICON_DOT_X + 6, WIFI_ICON_DOT_Y - 8,
+                     WIFI_ICON_DOT_X + 7,
+                     WIFI_ICON_DOT_Y - 8); // dot top right line
   }
 
   if ((!animate && rssi >= -70) || (animate && currentStep) >= 2) {
-    display.drawLine(4, 10, 5, 10);   // dot mid left line
-    display.drawLine(6, 9, 11, 9);    // dot mid middle line
-    display.drawLine(12, 10, 13, 10); // dot mid right line
+    display.drawLine(WIFI_ICON_DOT_X - 4, WIFI_ICON_DOT_Y - 5,
+                     WIFI_ICON_DOT_X - 3,
+                     WIFI_ICON_DOT_Y - 5); // dot mid left line
+    display.drawLine(WIFI_ICON_DOT_X - 2, WIFI_ICON_DOT_Y - 6,
+                     WIFI_ICON_DOT_X + 3,
+                     WIFI_ICON_DOT_Y - 6); // dot mid middle line
+    display.drawLine(WIFI_ICON_DOT_X + 4, WIFI_ICON_DOT_Y - 5,
+                     WIFI_ICON_DOT_X + 5,
+                     WIFI_ICON_DOT_Y - 5); // dot mid right line
   }
 
   if ((!animate && rssi >= -80) || (animate && currentStep) >= 1) {
-    display.drawLine(5, 13, 6, 13);   // dot lower left line
-    display.drawLine(7, 12, 10, 12);  // dot lower middle line
-    display.drawLine(11, 13, 12, 13); // dot lower right line
+    display.drawLine(WIFI_ICON_DOT_X - 3, WIFI_ICON_DOT_Y - 2,
+                     WIFI_ICON_DOT_X - 2,
+                     WIFI_ICON_DOT_Y - 2); // dot lower left line
+    display.drawLine(WIFI_ICON_DOT_X - 1, WIFI_ICON_DOT_Y - 3,
+                     WIFI_ICON_DOT_X + 2,
+                     WIFI_ICON_DOT_Y - 3); // dot lower middle line
+    display.drawLine(WIFI_ICON_DOT_X + 3, WIFI_ICON_DOT_Y - 2,
+                     WIFI_ICON_DOT_X + 4,
+                     WIFI_ICON_DOT_Y - 2); // dot lower right line
   }
 
   display.fillRect(WIFI_ICON_DOT_X, WIFI_ICON_DOT_Y, 2, 2); // the dot
@@ -150,7 +168,7 @@ void setupWiFi(const char *ssid, const char *password,
     if (!quiet) {
       display.clear();
       displayWiFiIcon(true);
-      display.drawString(64, 32, F("WiFi connecting..."));
+      display.drawString(64, 32, F("WiFi setup..."));
       display.display();
     }
 
@@ -408,7 +426,7 @@ void updateMainLoop(void) {
   if (!WiFi.isConnected()) {
     displayWiFiIcon(true);
     setupWiFi(SSID, PASSWORD, WIFI_TIMEOUT_MILLIS, true);
-  } else {
+  } else if (WiFi.isConnected() && !showActivityIndicator) {
     displayWiFiIcon(false);
   }
 
