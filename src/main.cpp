@@ -90,8 +90,8 @@ uint8_t currentStep = 0;
 #define MAX_STEPS 3
 // tracks how long touches are
 unsigned long lastTouchStart = 0;
-// hold for about 5 seconds to sleep
-#define TOUCH_INVERT_SRC_THRESHOLD 4750
+// hold for about 6 seconds to sleep
+#define TOUCH_INVERT_SRC_THRESHOLD 5900
 
 // UI elements
 static const uint8_t WIFI_ICON_DOT_X = 12;
@@ -383,6 +383,7 @@ void processLongTouch(void) {
 
     if (lastTouchStart == 0) { // register touch
       lastTouchStart = millis();
+      currentStep = 0;
     }
 
     unsigned long currMillis = millis();
