@@ -1,5 +1,6 @@
 #include "NTPClient.h"
 #include <Arduino.h>
+#define ARDUINOJSON_USE_DOUBLE 0
 #include <ArduinoJson.h>
 #include <AsyncHTTPRequest_Generic.h>
 #include <FS.h>
@@ -16,8 +17,12 @@
  *
   static const PROGMEM char SSID[] = "ssid";
   static const PROGMEM char PASSWORD[] = "password";
-  static const PROGMEM char API_URL[] = "scheme://api.url/api";
-  static const PROGMEM char AUTH_HEADER[] = " Bearer YOURTOKEN";
+  static const PROGMEM char API_URL[] = "http://homeassistant.ip:8123/api/states/";
+
+  static const PROGMEM char AUTH_HEADER[] = " Bearer MyToken";
+
+  static const PROGMEM char IN_SENSOR_ID[] = "sensor.id";
+  static const PROGMEM char OUT_SENSOR_ID[] = "sensor.id";
 */
 
 static const unsigned long WIFI_TIMEOUT_MILLIS = 15000;
@@ -55,6 +60,9 @@ unsigned long lastUpdate = 0;
 StaticJsonDocument<48> sensorDoc;
 StaticJsonDocument<16> sensorValueFilter;
 
+StaticJsonDocument<96> outSensorDoc;
+StaticJsonDocument<32> outSensorValueFilter;
+
 static const PROGMEM char SEPERATOR_HYPHEN[] = " - ";
 static const PROGMEM char SEPERATOR_PIPE[] = " | ";
 static const PROGMEM char SENSOR_UNAVAILABLE_STR[] = "unavailable";
@@ -66,7 +74,7 @@ String formattedTime;
 String formattedDate;
 String timeStamp;
 // JSON request variables
-#define SENSOR_RESPONSE_BUFFER_SIZE 512
+#define SENSOR_RESPONSE_BUFFER_SIZE 4096
 uint8_t sensorResponseBuffer[SENSOR_RESPONSE_BUFFER_SIZE];
 char insideTempSensorReading[5] = "-.-";
 char outsideTempSensorReading[5] = "-.-";
@@ -132,17 +140,15 @@ void sendApiRequest(AsyncHTTPRequest *request, String sensorId) {
 }
 
 void sendInTempSensorApiRequest(void) {
-  sendApiRequest(&inTempRequest,
-                 F("sensor.temperature_humidity_sensor_51b9_temperature"));
+  sendApiRequest(&inTempRequest, IN_SENSOR_ID);
 }
 
 void sendOutTempSensorApiRequest(void) {
-  sendApiRequest(&outTempRequest,
-                 F("sensor.temperature_humidity_sensor_394e_temperature"));
+  sendApiRequest(&outTempRequest, OUT_SENSOR_ID);
 }
 
-void apiSensorReadRequestCb(void *cbVoidPtr, AsyncHTTPRequest *request,
-                            int readyState) {
+void apiInSensorReadReqCb(void *cbVoidPtr, AsyncHTTPRequest *request,
+                          int readyState) {
   char *readingStringPtr = (char *)cbVoidPtr;
 
   if (readyState == readyStateDone) {
@@ -170,6 +176,32 @@ void apiSensorReadRequestCb(void *cbVoidPtr, AsyncHTTPRequest *request,
   }
 }
 
+// ugly hack, but repeating code costs less RAM
+void apiOutSensorReadReqCb(void *cbVoidPtr, AsyncHTTPRequest *request,
+                           int readyState) {
+  char *readingStringPtr = (char *)cbVoidPtr;
+
+  if (readyState == readyStateDone) {
+    if (request->responseHTTPcode() == 200) {
+      request->responseRead(sensorResponseBuffer, 2048);
+
+      DeserializationError error =
+          deserializeJson(outSensorDoc, sensorResponseBuffer,
+                          DeserializationOption::Filter(outSensorValueFilter));
+
+      if (error) {
+        Serial.print(F("deserializeJson() failed: "));
+        Serial.println(error.f_str());
+      } else {
+        auto tempFloat = outSensorDoc["attributes"]["temperature"].as<float>();
+        char buffer[6]; // xx.yy + \0
+        sprintf(buffer, "%0g", tempFloat);
+        strncpy(readingStringPtr, buffer, strlen(buffer));
+      }
+    }
+  }
+}
+
 void setup(void) {
   Serial.begin(115200);
   Serial.println(F("Starting..."));
@@ -192,15 +224,17 @@ void setup(void) {
 
   // set up requestJSON filters and request ticker
   sensorValueFilter["state"] = true;
+  outSensorValueFilter["attributes"]["temperature"] = true;
   // set up the requests we will be making
-  inTempRequest.onReadyStateChange(apiSensorReadRequestCb,
+  inTempRequest.onReadyStateChange(apiInSensorReadReqCb,
                                    &insideTempSensorReading);
   inTempRequestTicker.attach(HTTP_REQUEST_INTERVAL, sendInTempSensorApiRequest);
   sendInTempSensorApiRequest();
 
-  outTempRequest.onReadyStateChange(apiSensorReadRequestCb,
-                                   &outsideTempSensorReading);
-  outTempRequestTicker.attach(HTTP_REQUEST_INTERVAL, sendOutTempSensorApiRequest);
+  outTempRequest.onReadyStateChange(apiOutSensorReadReqCb,
+                                    &outsideTempSensorReading);
+  outTempRequestTicker.attach(HTTP_REQUEST_INTERVAL,
+                              sendOutTempSensorApiRequest);
   sendOutTempSensorApiRequest();
 }
 
@@ -229,19 +263,7 @@ void drawl4o4(void) {
   display.drawLine(108, 28, 108, 48);
 }
 
-void displaySensorRow(boolean draw = false) {
-  String sensorOutputFirstRow = String(insideTempSensorReading) + String("°C") +
-                                String(" | ") +
-                                String(outsideTempSensorReading) + String("°C");
-  String sensorOutputSecondRow = String("WDAY $xxx.yy");
-
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawLine(25, 25, 103, 25);
-  display.drawString(64, 26, sensorOutputFirstRow);
-  display.drawString(64, 38, sensorOutputSecondRow);
-  display.drawLine(25, 53, 103, 53);
-
+void animateSideLines(void) {
   switch (currentStep) {
   case 0:
   default:
@@ -259,6 +281,24 @@ void displaySensorRow(boolean draw = false) {
     drawl4o4();
     break;
   }
+}
+
+void displaySensorRow(boolean draw = false) {
+  String sensorOutputFirstRow = String(insideTempSensorReading) + String("°C") +
+                                String(" | ") +
+                                String(outsideTempSensorReading) + String("°C");
+  String sensorOutputSecondRow = String("WDAY $xxx.yy");
+
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  // draw top line
+  display.drawLine(25, 25, 103, 25);
+  display.drawString(64, 26, sensorOutputFirstRow);
+  display.drawString(64, 38, sensorOutputSecondRow);
+  // draw bottom line
+  display.drawLine(25, 53, 103, 53);
+
+  animateSideLines();
 
   if (draw)
     display.display();
