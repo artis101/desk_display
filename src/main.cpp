@@ -459,7 +459,8 @@ void setup(void) {
   display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
   Serial.println(F("\tOK!"));
 
-  boolean touchWakeup = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TOUCHPAD;
+  boolean touchWakeup =
+      esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TOUCHPAD;
 
   Serial.print(F("Connecting to WiFi"));
 
