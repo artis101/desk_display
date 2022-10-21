@@ -40,8 +40,12 @@ SSD1306Wire display(OLED_ROTATION, OLED_SDA, OLED_SCL); // ADDRESS, SDA, SCL
 
 #define HTTP_REQUEST_INTERVAL 60 // 300
 #define _ASYNC_HTTP_LOGLEVEL_ 0
-AsyncHTTPRequest request;
-Ticker requestTicker;
+AsyncHTTPRequest inTempRequest;
+Ticker inTempRequestTicker;
+AsyncHTTPRequest outTempRequest;
+Ticker outTempRequestTicker;
+AsyncHTTPRequest stockPriceRequest;
+Ticker stockPriceRequestTicker;
 
 // counter from 0 to 3 that resets itself
 uint8_t currentStep = 0;
@@ -51,7 +55,7 @@ unsigned long lastUpdate = 0;
 StaticJsonDocument<48> sensorDoc;
 StaticJsonDocument<16> sensorValueFilter;
 
-static const PROGMEM char SEPERATOR_HYPHEN[] = " – ";
+static const PROGMEM char SEPERATOR_HYPHEN[] = " - ";
 static const PROGMEM char SEPERATOR_PIPE[] = " | ";
 static const PROGMEM char SENSOR_UNAVAILABLE_STR[] = "unavailable";
 static const PROGMEM char SENSOR_NO_VALUE_STR[] = "-.-";
@@ -64,7 +68,8 @@ String timeStamp;
 // JSON request variables
 #define SENSOR_RESPONSE_BUFFER_SIZE 512
 uint8_t sensorResponseBuffer[SENSOR_RESPONSE_BUFFER_SIZE];
-char temperatureSensorReading[5] = "-.-";
+char insideTempSensorReading[5] = "-.-";
+char outsideTempSensorReading[5] = "-.-";
 
 void setupWiFi(const char *ssid, const char *password,
                unsigned long rebootTimeoutMillis) {
@@ -105,23 +110,35 @@ void setupWiFi(const char *ssid, const char *password,
   }
 }
 
-void sendApiRequest() {
+void sendApiRequest(AsyncHTTPRequest *request, String sensorId) {
   static bool requestOpenResult;
 
-  if (request.readyState() == readyStateUnsent ||
-      request.readyState() == readyStateDone) {
-    requestOpenResult = request.open("GET", API_URL);
-    request.setReqHeader("Accept", "application/json");
-    request.setReqHeader("Authorization", AUTH_HEADER);
+  if (request->readyState() == readyStateUnsent ||
+      request->readyState() == readyStateDone) {
+    String apiUrlStr = String(API_URL + sensorId);
+
+    requestOpenResult = request->open("GET", apiUrlStr.c_str());
+    request->setReqHeader("Accept", "application/json");
+    request->setReqHeader("Authorization", AUTH_HEADER);
 
     if (requestOpenResult) {
-      request.send();
+      request->send();
     } else {
       Serial.println(F("Can't open Request"));
     }
   } else {
     Serial.println(F("Can't send Request"));
   }
+}
+
+void sendInTempSensorApiRequest(void) {
+  sendApiRequest(&inTempRequest,
+                 F("sensor.temperature_humidity_sensor_51b9_temperature"));
+}
+
+void sendOutTempSensorApiRequest(void) {
+  sendApiRequest(&outTempRequest,
+                 F("sensor.temperature_humidity_sensor_394e_temperature"));
 }
 
 void apiSensorReadRequestCb(void *cbVoidPtr, AsyncHTTPRequest *request,
@@ -173,12 +190,18 @@ void setup(void) {
   // GMT +3 = 3600 * 3
   timeClient.setTimeOffset(3600 * 3);
 
-  // set up JSON filters and request ticker
+  // set up requestJSON filters and request ticker
   sensorValueFilter["state"] = true;
-  request.setDebug(false);
-  request.onReadyStateChange(apiSensorReadRequestCb, &temperatureSensorReading);
-  requestTicker.attach(HTTP_REQUEST_INTERVAL, sendApiRequest);
-  sendApiRequest();
+  // set up the requests we will be making
+  inTempRequest.onReadyStateChange(apiSensorReadRequestCb,
+                                   &insideTempSensorReading);
+  inTempRequestTicker.attach(HTTP_REQUEST_INTERVAL, sendInTempSensorApiRequest);
+  sendInTempSensorApiRequest();
+
+  outTempRequest.onReadyStateChange(apiSensorReadRequestCb,
+                                   &outsideTempSensorReading);
+  outTempRequestTicker.attach(HTTP_REQUEST_INTERVAL, sendOutTempSensorApiRequest);
+  sendOutTempSensorApiRequest();
 }
 
 void displayClockRow(boolean draw = false) {
@@ -207,7 +230,9 @@ void drawl4o4(void) {
 }
 
 void displaySensorRow(boolean draw = false) {
-  String sensorOutputFirstRow = String(temperatureSensorReading) + String("°C");
+  String sensorOutputFirstRow = String(insideTempSensorReading) + String("°C") +
+                                String(" | ") +
+                                String(outsideTempSensorReading) + String("°C");
   String sensorOutputSecondRow = String("WDAY $xxx.yy");
 
   display.setFont(ArialMT_Plain_10);
@@ -239,38 +264,34 @@ void displaySensorRow(boolean draw = false) {
     display.display();
 }
 
-void displayDateRow(boolean draw = false) {
-  String dow;
-
+String getDow(void) {
   switch (timeClient.getDay()) {
   case 0:
-    dow = F("Sun");
-    break;
+    return F("Sun");
   case 1:
-    dow = F("Mon");
-    break;
+    return F("Mon");
   case 2:
-    dow = F("Tue");
-    break;
+    return F("Tue");
   case 3:
-    dow = F("Wed");
-    break;
+    return F("Wed");
   case 4:
-    dow = F("Thu");
-    break;
+    return F("Thu");
   case 5:
-    dow = F("Fri");
-    break;
+    return F("Fri");
   case 6:
-    dow = F("Sat");
-    break;
+    return F("Sat");
+  default:
+    return F("UNKNOWN");
   }
+}
 
+void displayDateRow(boolean draw = false) {
   formattedDateTime = timeClient.getFormattedDate();
   int splitT = formattedDateTime.indexOf("T");
   formattedDate = formattedDateTime.substring(0, splitT);
   display.setFont(ArialMT_Plain_10);
-  display.drawString(64, 54, String(formattedDate + SEPERATOR_HYPHEN + dow));
+  display.drawString(64, 54,
+                     String(formattedDate + String(SEPERATOR_PIPE) + getDow()));
 
   if (draw)
     display.display();
