@@ -134,7 +134,7 @@ Ticker uiLoop;
 
 void displayWiFiTimeout(void) {
   display.clear();
-  display.drawString(64, 32, F("WiFi setup failed, restarting in 5s!"));
+  display.drawString(64, 32, F("WiFi setup FAILED!"));
   display.display();
 }
 
@@ -144,66 +144,51 @@ void updateCurrentStep(void) {
       (currentStep > 0 && currentStep % MAX_STEPS == 0) ? 0 : currentStep + 1;
 }
 
-void displayWiFiIcon(bool animate = false) {
+void displayWiFiIcon(bool animate = false, uint8_t x = WIFI_ICON_DOT_X,
+                     uint8_t y = WIFI_ICON_DOT_Y) {
   long rssi = WiFi.RSSI();
 
-  if ((!animate && rssi >= -67) || (animate && currentStep) >= 3) {
-    display.drawLine(WIFI_ICON_DOT_X - 6, WIFI_ICON_DOT_Y - 8,
-                     WIFI_ICON_DOT_X - 5,
-                     WIFI_ICON_DOT_Y - 8); // dot top left line
-    display.drawLine(WIFI_ICON_DOT_X - 4, WIFI_ICON_DOT_Y - 9,
-                     WIFI_ICON_DOT_X + 5,
-                     WIFI_ICON_DOT_Y - 9); // dot top middle line
-    display.drawLine(WIFI_ICON_DOT_X + 6, WIFI_ICON_DOT_Y - 8,
-                     WIFI_ICON_DOT_X + 7,
-                     WIFI_ICON_DOT_Y - 8); // dot top right line
+  if ((!animate && rssi >= -67) || (animate && currentStep >= 3)) {
+    display.drawLine(x - 6, y - 8, x - 5,
+                     y - 8); // dot top left line
+    display.drawLine(x - 4, y - 9, x + 5,
+                     y - 9); // dot top middle line
+    display.drawLine(x + 6, y - 8, x + 7,
+                     y - 8); // dot top right line
   }
 
-  if ((!animate && rssi >= -70) || (animate && currentStep) >= 2) {
-    display.drawLine(WIFI_ICON_DOT_X - 4, WIFI_ICON_DOT_Y - 5,
-                     WIFI_ICON_DOT_X - 3,
-                     WIFI_ICON_DOT_Y - 5); // dot mid left line
-    display.drawLine(WIFI_ICON_DOT_X - 2, WIFI_ICON_DOT_Y - 6,
-                     WIFI_ICON_DOT_X + 3,
-                     WIFI_ICON_DOT_Y - 6); // dot mid middle line
-    display.drawLine(WIFI_ICON_DOT_X + 4, WIFI_ICON_DOT_Y - 5,
-                     WIFI_ICON_DOT_X + 5,
-                     WIFI_ICON_DOT_Y - 5); // dot mid right line
+  if ((!animate && rssi >= -70) || (animate && currentStep >= 2)) {
+    display.drawLine(x - 4, y - 5, x - 3,
+                     y - 5); // dot mid left line
+    display.drawLine(x - 2, y - 6, x + 3,
+                     y - 6); // dot mid middle line
+    display.drawLine(x + 4, y - 5, x + 5,
+                     y - 5); // dot mid right line
   }
 
-  if ((!animate && rssi >= -80) || (animate && currentStep) >= 1) {
-    display.drawLine(WIFI_ICON_DOT_X - 3, WIFI_ICON_DOT_Y - 2,
-                     WIFI_ICON_DOT_X - 2,
-                     WIFI_ICON_DOT_Y - 2); // dot lower left line
-    display.drawLine(WIFI_ICON_DOT_X - 1, WIFI_ICON_DOT_Y - 3,
-                     WIFI_ICON_DOT_X + 2,
-                     WIFI_ICON_DOT_Y - 3); // dot lower middle line
-    display.drawLine(WIFI_ICON_DOT_X + 3, WIFI_ICON_DOT_Y - 2,
-                     WIFI_ICON_DOT_X + 4,
-                     WIFI_ICON_DOT_Y - 2); // dot lower right line
+  if ((!animate && rssi >= -80) || (animate && currentStep >= 1)) {
+    display.drawLine(x - 3, y - 2, x - 2,
+                     y - 2); // dot lower left line
+    display.drawLine(x - 1, y - 3, x + 2,
+                     y - 3); // dot lower middle line
+    display.drawLine(x + 3, y - 2, x + 4,
+                     y - 2); // dot lower right line
   }
 
-  display.fillRect(WIFI_ICON_DOT_X, WIFI_ICON_DOT_Y, 2, 2); // the dot
+  display.fillRect(x, y, 2, 2); // the dot
 }
 
-void setupWiFi(const char *ssid, const char *password,
-               unsigned long rebootTimeoutMillis, bool quiet = false) {
+void connectToAP(bool quiet = false) {
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+  WiFi.begin(deviceSettings.wifiSsid, deviceSettings.wifiPassword);
 
+  Serial.print(F("Connecting to WiFi"));
   unsigned long startMillis = millis();
   while (true) {
     Serial.print('.');
 
-    if (!quiet) {
-      display.clear();
-      displayWiFiIcon(true);
-      display.drawString(64, 32, F("WiFi setup..."));
-      display.display();
-    }
-
     unsigned long nowMillis = millis();
-    if ((unsigned long)(nowMillis - startMillis) >= rebootTimeoutMillis) {
+    if ((unsigned long)(nowMillis - startMillis) >= WIFI_TIMEOUT_MILLIS) {
       Serial.println(F("\tFAIL!"));
       Serial.println(F("WiFi setup failed, restarting in 5s!"));
       displayWiFiTimeout();
@@ -217,11 +202,25 @@ void setupWiFi(const char *ssid, const char *password,
         display.drawString(64, 32, F("WiFi connected!"));
         display.display();
       }
+      Serial.println(F("\tOK!"));
       break;
     } else {
+      if (!quiet) {
+        display.clear();
+        displayWiFiIcon(true);
+        display.drawString(64, 32, F("WiFi setup..."));
+        display.display();
+      }
+
       updateCurrentStep();
       delay(500);
     }
+  }
+}
+
+void setupWiFi(bool quiet = false) {
+  if (deviceSettings.isSetup) {
+    connectToAP(quiet);
   }
 }
 
@@ -234,7 +233,8 @@ void sendApiRequest(AsyncHTTPRequest *request, String sensorId) {
 
   if (request->readyState() == readyStateUnsent ||
       request->readyState() == readyStateDone) {
-    String apiAuthHeader = String(" Bearer " + String(deviceSettings.authToken));
+    String apiAuthHeader =
+        String(" Bearer " + String(deviceSettings.authToken));
     String apiUrlStr = String(deviceSettings.apiUrl + sensorId);
 
     requestOpenResult = request->open("GET", apiUrlStr.c_str());
@@ -443,8 +443,8 @@ void processLongTouch(void) {
 
 void processInteractions(void) { processLongTouch(); }
 
-void updateMainLoop(void) {
-  while (!timeClient.update()) {
+void processMainUI(void) {
+  while (WiFi.isConnected() && !timeClient.update()) {
     timeClient.forceUpdate();
   }
 
@@ -461,13 +461,33 @@ void updateMainLoop(void) {
 
   if (!WiFi.isConnected()) {
     displayWiFiIcon(true);
-    setupWiFi(deviceSettings.wifiSsid, deviceSettings.wifiPassword,
-              WIFI_TIMEOUT_MILLIS, true);
+    setupWiFi(true);
   } else if (WiFi.isConnected() && !showActivityIndicator) {
     displayWiFiIcon(false);
   }
 
   display.display();
+}
+
+void processSetupUI(void) {
+  display.clear();
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(30, 40, F("SSID: dd_setup"));
+  display.drawString(30, 50, F("PW:   12345"));
+
+  displayWiFiIcon(true, 64, 26);
+  display.display();
+
+  updateCurrentStep();
+}
+
+void updateMainLoop(void) {
+  if (deviceSettings.isSetup) {
+    processMainUI();
+  } else {
+    processSetupUI();
+  }
 }
 
 void initDisplay(void) {
@@ -482,29 +502,36 @@ void initDisplay(void) {
   Serial.println(F("\tOK!"));
 }
 
-void initWifiAndSleep(void) {
-  bool touchWakeup = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TOUCHPAD;
+void setupWebServer(void) {
+  Serial.print("Starting HTTP server...");
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(SPIFFS, "/index.html", "text/html");
+  });
 
-  Serial.print(F("Connecting to WiFi"));
+  server.onNotFound(handleNotFound);
 
-  if (touchWakeup) {
-    display.drawString(64, 32, F("Waking up..."));
-    displayWiFiIcon(true);
-    display.display();
-    setupWiFi(deviceSettings.wifiSsid, deviceSettings.wifiPassword,
-              WIFI_TIMEOUT_MILLIS, true);
-  } else {
-    setupWiFi(deviceSettings.wifiSsid, deviceSettings.wifiPassword,
-              WIFI_TIMEOUT_MILLIS, false);
-    delay(2000);
-  }
-
+  server.begin();
   Serial.println(F("\tOK!"));
 
   Serial.println(F("********************************"));
   Serial.print(F("I'm available at http://"));
   Serial.println(WiFi.localIP());
   Serial.println(F("********************************"));
+}
+
+void initWifiAndSleep(void) {
+  bool wokeUpFromTouch =
+      esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TOUCHPAD;
+
+  if (wokeUpFromTouch) {
+    display.drawString(64, 32, F("Waking up..."));
+    displayWiFiIcon(true);
+    display.display();
+    setupWiFi(true);
+  } else {
+    setupWiFi(false);
+    delay(2000);
+  }
 }
 
 void touchInterruptCb(void) {}
@@ -515,16 +542,17 @@ void initDeviceSettings(void) {
     Serial.print("Default config doesn't exist, creating...");
     DeviceSettings defaultSettings;
     defaultSettings.isSetup = false;
-    defaultSettings.wifiSsid = strdup(SSID);
-    defaultSettings.wifiPassword = strdup(PASSWORD);
-    defaultSettings.apiUrl = strdup(API_URL);
-    defaultSettings.authToken = strdup(AUTH_HEADER_TOKEN);
-    defaultSettings.inSensorId = strdup(IN_SENSOR_ID);
-    defaultSettings.outSensorId = strdup(OUT_SENSOR_ID);
+    defaultSettings.wifiSsid = strndup(SSID, strlen(SSID));
+    defaultSettings.wifiPassword = strndup(PASSWORD, strlen(PASSWORD));
+    defaultSettings.apiUrl = strndup(API_URL, strlen(API_URL));
+    defaultSettings.authToken =
+        strndup(AUTH_HEADER_TOKEN, strlen(AUTH_HEADER_TOKEN));
+    defaultSettings.inSensorId = strndup(IN_SENSOR_ID, strlen(IN_SENSOR_ID));
+    defaultSettings.outSensorId = strndup(OUT_SENSOR_ID, strlen(OUT_SENSOR_ID));
     defaultSettings.displayWifiIndicator = true;
-    defaultSettings.httpRequestInterval = strdup("60");
-    defaultSettings.sleepTouchThreshold = strdup("long");
-    defaultSettings.screenBrightness = strdup("dim");
+    defaultSettings.httpRequestInterval = strndup("60", 3);
+    defaultSettings.sleepTouchThreshold = strndup("long", 5);
+    defaultSettings.screenBrightness = strndup("dim", 4);
     defaultSettings.invertScreen = false;
     defaultSettings.debugMode = false;
 
@@ -537,10 +565,45 @@ void initDeviceSettings(void) {
     Serial.println(F("\tOK!"));
   } else {
     Serial.print("Device config exists, loading...");
+
     File file = SPIFFS.open(CONFIG_FILE_NAME, "rb");
     file.read((byte *)&deviceSettings, sizeof(deviceSettings));
+
     Serial.println(F("\tOK!"));
+
+    Serial.print("SSID: ");
+    Serial.println(deviceSettings.wifiSsid);
+    Serial.print("displayWifiIndicator: ");
+    Serial.println(deviceSettings.displayWifiIndicator);
   }
+}
+
+void initTimeClient(void) {
+  Serial.print(F("Initializing NTP client..."));
+  // set up time client and adjust GMT offset
+  timeClient.begin();
+  // GMT +3 = 3600 * 3
+  timeClient.setTimeOffset(3600 * 3);
+  Serial.println(F("\tOK!"));
+}
+
+void initDataFetch(void) {
+  Serial.print(F("Fetching data..."));
+  // set up requestJSON filters and request ticker
+  sensorValueFilter["state"] = true;
+  outSensorValueFilter["attributes"]["temperature"] = true;
+  // set up the requests we will be making
+  inTempRequest.onReadyStateChange(apiSensorReadReqCb,
+                                   &insideTempSensorReading);
+  inTempRequestTicker.attach(HTTP_REQUEST_INTERVAL, sendInTempSensorApiRequest);
+
+  outTempRequest.onReadyStateChange(apiSensorReadReqCb,
+                                    &outsideTempSensorReading);
+  outTempRequestTicker.attach(HTTP_REQUEST_INTERVAL,
+                              sendOutTempSensorApiRequest);
+  sendInTempSensorApiRequest();
+  sendOutTempSensorApiRequest();
+  Serial.println(F("\tOK!"));
 }
 
 void setup(void) {
@@ -558,6 +621,9 @@ void setup(void) {
 
   initDeviceSettings();
 
+  Serial.print("Is setup: ");
+  Serial.println(deviceSettings.isSetup);
+
   if (esp_sleep_enable_touchpad_wakeup() == ESP_OK) {
     touchAttachInterrupt(TOUCH_PIN, touchInterruptCb, TOUCH_TRESHOLD);
   } else {
@@ -567,40 +633,14 @@ void setup(void) {
   initDisplay();
   initWifiAndSleep();
 
-  Serial.print("Starting HTTP server...");
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SPIFFS, "/index.html", "text/html");
-  });
-
-  server.onNotFound(handleNotFound);
-
-  server.begin();
-  Serial.println(F("\tOK!"));
-
-  // set up time client and adjust GMT offset
-  timeClient.begin();
-  // GMT +3 = 3600 * 3
-  timeClient.setTimeOffset(3600 * 3);
-
   uiLoop.attach(UI_LOOP_INTERVAL, processInteractions);
   mainEventLoop.attach(MAIN_EVENT_LOOP_INTERVAL, updateMainLoop);
 
-  Serial.print(F("Fetching data..."));
-  // set up requestJSON filters and request ticker
-  sensorValueFilter["state"] = true;
-  outSensorValueFilter["attributes"]["temperature"] = true;
-  // set up the requests we will be making
-  inTempRequest.onReadyStateChange(apiSensorReadReqCb,
-                                   &insideTempSensorReading);
-  inTempRequestTicker.attach(HTTP_REQUEST_INTERVAL, sendInTempSensorApiRequest);
-
-  outTempRequest.onReadyStateChange(apiSensorReadReqCb,
-                                    &outsideTempSensorReading);
-  outTempRequestTicker.attach(HTTP_REQUEST_INTERVAL,
-                              sendOutTempSensorApiRequest);
-  sendInTempSensorApiRequest();
-  sendOutTempSensorApiRequest();
-  Serial.println(F("\tOK!"));
+  if (deviceSettings.isSetup && WiFi.isConnected()) {
+    initTimeClient();
+    initDataFetch();
+    setupWebServer();
+  }
 }
 
 void loop(void) {}
