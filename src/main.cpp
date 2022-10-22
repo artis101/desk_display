@@ -1,8 +1,12 @@
 #include "NTPClient.h"
 #include <Arduino.h>
 #define ARDUINOJSON_USE_DOUBLE 0
+#include "SPIFFS.h"
 #include <ArduinoJson.h>
 #include <AsyncHTTPRequest_Generic.h>
+#include <AsyncTCP.h>
+#include <EEPROM.h>
+#include <ESPAsyncWebServer.h>
 #include <FS.h>
 #include <SPI.h>
 #include <SSD1306Wire.h>
@@ -10,7 +14,6 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <Wire.h>
-#include <EEPROM.h>
 
 #include "srcsecrets.h"
 /**
@@ -21,7 +24,7 @@
   static const PROGMEM char API_URL[] =
  "http://homeassistant.ip:8123/api/states/";
 
-  static const PROGMEM char AUTH_HEADER[] = " Bearer MyToken";
+  static const PROGMEM char AUTH_HEADER_TOKEN[] = " Bearer MyToken";
 
   static const PROGMEM char IN_SENSOR_ID[] = "sensor.id";
   static const PROGMEM char OUT_SENSOR_ID[] = "sensor.id";
@@ -31,25 +34,26 @@ RTC_DATA_ATTR int bootCount = 0;
 
 static const unsigned long WIFI_TIMEOUT_MILLIS = 15000;
 
-#define EE_ADDRESS 0
-#define EEPROM_SIZE 1024
+#define CONFIG_FILE_NAME "/.config"
 
 struct DeviceSettings {
+  // internal flags
+  bool isSetup;
+  // wifi settings
+  char *wifiSsid;
+  char *wifiPassword;
+  // home assistant rest api settings
+  char *apiUrl;
+  char *authToken;
+  char *inSensorId;
+  char *outSensorId;
   // device settings
-  bool settingsWritten;
-  bool wifiConfigured;
-  // network settings
-  char wifiSsid[32];
-  char wifiPassword[32];
-  uint8_t screenBrightness;
-  // NTP UTC offset in seconds
-  uint8_t ntpOffset;
-  char ntpAddress[128];
-  // intervals
-  uint8_t httpRequestInterval;
-  uint8_t autoSleepTimeout;
-  // debug settings
-  bool debugEnabled;
+  bool displayWifiIndicator;
+  char *httpRequestInterval;
+  char *sleepTouchThreshold;
+  char *screenBrightness;
+  bool invertScreen;
+  bool debugMode;
 };
 
 DeviceSettings deviceSettings;
@@ -104,6 +108,8 @@ Ticker inTempRequestTicker;
 Ticker outTempRequestTicker;
 Ticker stockPriceRequestTicker;
 
+AsyncWebServer server(80);
+
 #define TOUCH_PIN T0
 #define TOUCH_TRESHOLD 100 // touch is below 100
 
@@ -115,7 +121,7 @@ uint8_t currentStep = 0;
 // tracks how long touches are
 unsigned long lastTouchStart = 0;
 // hold for about 6 seconds to sleep
-#define TOUCH_INVERT_SRC_THRESHOLD 5900
+#define SLEEP_TOUCH_THRESHOLD 5900
 
 // UI elements
 static const uint8_t WIFI_ICON_DOT_X = 12;
@@ -198,7 +204,7 @@ void setupWiFi(const char *ssid, const char *password,
 
     unsigned long nowMillis = millis();
     if ((unsigned long)(nowMillis - startMillis) >= rebootTimeoutMillis) {
-      Serial.println(F(""));
+      Serial.println(F("\tFAIL!"));
       Serial.println(F("WiFi setup failed, restarting in 5s!"));
       displayWiFiTimeout();
       delay(5000);
@@ -219,16 +225,21 @@ void setupWiFi(const char *ssid, const char *password,
   }
 }
 
+void handleNotFound(AsyncWebServerRequest *request) {
+  request->send(404, "text/plain", "File Not Found");
+}
+
 void sendApiRequest(AsyncHTTPRequest *request, String sensorId) {
   static bool requestOpenResult;
 
   if (request->readyState() == readyStateUnsent ||
       request->readyState() == readyStateDone) {
-    String apiUrlStr = String(API_URL + sensorId);
+    String apiAuthHeader = String(" Bearer " + String(deviceSettings.authToken));
+    String apiUrlStr = String(deviceSettings.apiUrl + sensorId);
 
     requestOpenResult = request->open("GET", apiUrlStr.c_str());
     request->setReqHeader("Accept", "application/json");
-    request->setReqHeader("Authorization", AUTH_HEADER);
+    request->setReqHeader("Authorization", apiAuthHeader.c_str());
 
     if (requestOpenResult) {
       request->send();
@@ -396,9 +407,9 @@ void displayDateRow(bool draw = false) {
 
   display.setFont(ArialMT_Plain_10);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 51, String(formattedDate + F("   ") + getDow()));
+  display.drawString(64, 51, String(formattedDate + F("  ") + getDow()));
   // draw separator line
-  display.drawLine(85, 51, 85, 64);
+  display.drawLine(82, 51, 82, 64);
 }
 
 void processLongTouch(void) {
@@ -413,7 +424,7 @@ void processLongTouch(void) {
     unsigned long currMillis = millis();
     unsigned long touchDuration = currMillis - lastTouchStart;
 
-    if (touchDuration > TOUCH_INVERT_SRC_THRESHOLD) {
+    if (touchDuration > SLEEP_TOUCH_THRESHOLD) {
       display.clear();
       display.setFont(ArialMT_Plain_10);
       display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
@@ -450,7 +461,8 @@ void updateMainLoop(void) {
 
   if (!WiFi.isConnected()) {
     displayWiFiIcon(true);
-    setupWiFi(SSID, PASSWORD, WIFI_TIMEOUT_MILLIS, true);
+    setupWiFi(deviceSettings.wifiSsid, deviceSettings.wifiPassword,
+              WIFI_TIMEOUT_MILLIS, true);
   } else if (WiFi.isConnected() && !showActivityIndicator) {
     displayWiFiIcon(false);
   }
@@ -471,8 +483,7 @@ void initDisplay(void) {
 }
 
 void initWifiAndSleep(void) {
-  bool touchWakeup =
-      esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TOUCHPAD;
+  bool touchWakeup = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TOUCHPAD;
 
   Serial.print(F("Connecting to WiFi"));
 
@@ -480,16 +491,57 @@ void initWifiAndSleep(void) {
     display.drawString(64, 32, F("Waking up..."));
     displayWiFiIcon(true);
     display.display();
-    setupWiFi(SSID, PASSWORD, WIFI_TIMEOUT_MILLIS, true);
+    setupWiFi(deviceSettings.wifiSsid, deviceSettings.wifiPassword,
+              WIFI_TIMEOUT_MILLIS, true);
   } else {
-    setupWiFi(SSID, PASSWORD, WIFI_TIMEOUT_MILLIS, false);
+    setupWiFi(deviceSettings.wifiSsid, deviceSettings.wifiPassword,
+              WIFI_TIMEOUT_MILLIS, false);
     delay(2000);
   }
 
   Serial.println(F("\tOK!"));
+
+  Serial.println(F("********************************"));
+  Serial.print(F("I'm available at http://"));
+  Serial.println(WiFi.localIP());
+  Serial.println(F("********************************"));
 }
 
 void touchInterruptCb(void) {}
+
+void initDeviceSettings(void) {
+  // default config does not exist, dump it!
+  if (!SPIFFS.exists(CONFIG_FILE_NAME)) {
+    Serial.print("Default config doesn't exist, creating...");
+    DeviceSettings defaultSettings;
+    defaultSettings.isSetup = false;
+    defaultSettings.wifiSsid = strdup(SSID);
+    defaultSettings.wifiPassword = strdup(PASSWORD);
+    defaultSettings.apiUrl = strdup(API_URL);
+    defaultSettings.authToken = strdup(AUTH_HEADER_TOKEN);
+    defaultSettings.inSensorId = strdup(IN_SENSOR_ID);
+    defaultSettings.outSensorId = strdup(OUT_SENSOR_ID);
+    defaultSettings.displayWifiIndicator = true;
+    defaultSettings.httpRequestInterval = strdup("60");
+    defaultSettings.sleepTouchThreshold = strdup("long");
+    defaultSettings.screenBrightness = strdup("dim");
+    defaultSettings.invertScreen = false;
+    defaultSettings.debugMode = false;
+
+    File file = SPIFFS.open(CONFIG_FILE_NAME, "wb");
+
+    file.write((byte *)&defaultSettings, sizeof(defaultSettings));
+
+    deviceSettings = defaultSettings;
+
+    Serial.println(F("\tOK!"));
+  } else {
+    Serial.print("Device config exists, loading...");
+    File file = SPIFFS.open(CONFIG_FILE_NAME, "rb");
+    file.read((byte *)&deviceSettings, sizeof(deviceSettings));
+    Serial.println(F("\tOK!"));
+  }
+}
 
 void setup(void) {
   Serial.begin(115200);
@@ -497,6 +549,14 @@ void setup(void) {
   ++bootCount;
   Serial.println(F("Hello Hacker!"));
   Serial.println("Boot number: " + String(bootCount));
+
+  // Initialize SPIFFS
+  if (!SPIFFS.begin(true)) {
+    Serial.println("An Error has occurred while mounting SPIFFS!");
+    return;
+  }
+
+  initDeviceSettings();
 
   if (esp_sleep_enable_touchpad_wakeup() == ESP_OK) {
     touchAttachInterrupt(TOUCH_PIN, touchInterruptCb, TOUCH_TRESHOLD);
@@ -506,6 +566,16 @@ void setup(void) {
 
   initDisplay();
   initWifiAndSleep();
+
+  Serial.print("Starting HTTP server...");
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(SPIFFS, "/index.html", "text/html");
+  });
+
+  server.onNotFound(handleNotFound);
+
+  server.begin();
+  Serial.println(F("\tOK!"));
 
   // set up time client and adjust GMT offset
   timeClient.begin();

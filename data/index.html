@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Hello Hacker :: Desk Display</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+
+<body>
+  <main>
+    <h1>Hello Hacker!</h1>
+    <p>I'm a Desk Display and you can set me up on this page. You will need to provide your WiFi settings, provide the
+      HomeAssistant API token and sensor ID's.</p>
+    <form method="post" action="/save">
+      <div class="form-field-group">
+        <h2>WiFi</h2>
+        <div class="form-group">
+          <label for="wifiSsid">WiFi SSID</label>
+          <input type="text" id="wifiSsid" name="wifiSsid" placeholder="Enter your WiFi SSID" />
+        </div>
+        <div class="form-group">
+          <label for="wifiPassword">WiFi Password</label>
+          <input type="text" id="wifiPassword" name="wifiPassword" placeholder="Enter your WiFi Password" />
+        </div>
+      </div>
+
+      <div class="form-field-group">
+        <h2>HomeAssistant REST API</h2>
+        <div class="form-group">
+          <label for="apiUrl">States API URL</label>
+          <input type="text" id="apiUrl" name="apiUrl" placeholder="http://homeassistant.local:8123/api/states/" />
+        </div>
+        <div class="form-group">
+          <label for="authToken">HTTP Bearer Token</label>
+          <input type="text" id="authToken" name="authToken" placeholder="Paste access token from HomeAssistant" />
+        </div>
+      </div>
+
+      <div class="form-field-group">
+        <h2>HomeAssistant sensors</h2>
+        <div class="form-group">
+          <label for="inSensorId">Indoor temperature sensor ID</label>
+          <input type="text" id="inSensorId" name="inSensorId" placeholder="sensor.temperature_sensor_example_temperature" />
+        </div>
+        <div class="form-group">
+          <label for="outSensorId">Weather forecast sensor ID</label>
+          <input type="text" id="outSensorId" name="outSensorId" placeholder="weather.forecast_myhome" />
+        </div>
+      </div>
+
+      <div class="form-field-group">
+        <h2>Device settings</h2>
+        <div class="form-group">
+          <label for="displayWifiIndicator">Display WiFi indicator when on</label>
+          <input type="checkbox" id="displayWifiIndicator" name="displayWifiIndicator" checked />
+        </div>
+        <div class="form-group">
+          <label for="httpRequestInterval">HTTP request interval (in seconds)</label>
+          <input type="text" id="httpRequestInterval" name="httpRequestInterval" placeholder="60" />
+        </div>
+        <div class="form-group">
+          <label for="sleepTouchThreshold">Sleep button touch duration threshold</label>
+          <select id="sleepTouchThreshold" name="sleepTouchThreshold">
+            <option value="long" selected>Long (~3 blinks)</option>
+            <option value="medium">Medium (~2 blinks)</option>
+            <option value="short">Short (~1 blink)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="screenBrightness">Sleep brightness</label>
+          <select id="screenBrightness" name="screenBrightness">
+            <option value="high">Bright</option>
+            <option value="medium">Medium</option>
+            <option value="dim" selected>Dim</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="invertScreen">Invert screen</label>
+          <input type="checkbox" id="invertScreen" name="invertScreen" />
+        </div>
+        <div class="form-group">
+          <label for="debugMode">Enable debug</label>
+          <input type="checkbox" id="debugMode" name="debugMode" />
+        </div>
+      </div>
+
+      <button type="submit">Save</button>
+    </form>
+    <footer>
+      <p>The device will reset after applying settings.</p>
+    </footer>
+  </main>
+</body>
+
+</html>
