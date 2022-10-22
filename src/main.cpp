@@ -34,24 +34,28 @@ RTC_DATA_ATTR int bootCount = 0;
 
 static const unsigned long WIFI_TIMEOUT_MILLIS = 15000;
 
+#define CONFIG_TEXT_MAX_LENGTH 256
 #define CONFIG_FILE_NAME "/.config"
+static const char *defaultHttpRequestInterval = "60";
+static const char *defaultSleepTouchThreshold = "long";
+static const char *defaultScreenBrightness = "dim";
 
 struct DeviceSettings {
   // internal flags
   bool isSetup;
   // wifi settings
-  char *wifiSsid;
-  char *wifiPassword;
+  char wifiSsid[CONFIG_TEXT_MAX_LENGTH];
+  char wifiPassword[CONFIG_TEXT_MAX_LENGTH];
   // home assistant rest api settings
-  char *apiUrl;
-  char *authToken;
-  char *inSensorId;
-  char *outSensorId;
+  char apiUrl[CONFIG_TEXT_MAX_LENGTH];
+  char authToken[CONFIG_TEXT_MAX_LENGTH];
+  char inSensorId[CONFIG_TEXT_MAX_LENGTH];
+  char outSensorId[CONFIG_TEXT_MAX_LENGTH];
   // device settings
   bool displayWifiIndicator;
-  char *httpRequestInterval;
-  char *sleepTouchThreshold;
-  char *screenBrightness;
+  char httpRequestInterval[CONFIG_TEXT_MAX_LENGTH];
+  char sleepTouchThreshold[CONFIG_TEXT_MAX_LENGTH];
+  char screenBrightness[CONFIG_TEXT_MAX_LENGTH];
   bool invertScreen;
   bool debugMode;
 };
@@ -120,8 +124,10 @@ uint8_t currentStep = 0;
 #define MAX_STEPS 3
 // tracks how long touches are
 unsigned long lastTouchStart = 0;
-// hold for about 6 seconds to sleep
-#define SLEEP_TOUCH_THRESHOLD 5900
+// touch interactivity thresholds
+#define SLEEP_TOUCH_THRESHOLD_LONG 5900
+#define SLEEP_TOUCH_THRESHOLD_MEDIUM 4400
+#define SLEEP_TOUCH_THRESHOLD_SHORT 1400
 
 // UI elements
 static const uint8_t WIFI_ICON_DOT_X = 12;
@@ -132,20 +138,53 @@ Ticker mainEventLoop;
 // updates every 100ms grab user interaction events
 Ticker uiLoop;
 
-void displayWiFiTimeout(void) {
-  display.clear();
-  display.drawString(64, 32, F("WiFi setup FAILED!"));
-  display.display();
-}
-
 void updateCurrentStep(void) {
   // important update step every time
   currentStep =
       (currentStep > 0 && currentStep % MAX_STEPS == 0) ? 0 : currentStep + 1;
 }
 
+DeviceSettings getDefaultSettings(void) {
+  DeviceSettings defaultSettings;
+
+  defaultSettings.isSetup = false;
+  strcpy(defaultSettings.wifiSsid, SSID);
+  strcpy(defaultSettings.wifiPassword, PASSWORD);
+  strcpy(defaultSettings.apiUrl, API_URL);
+  strcpy(defaultSettings.authToken, AUTH_HEADER_TOKEN);
+  strcpy(defaultSettings.inSensorId, IN_SENSOR_ID);
+  strcpy(defaultSettings.outSensorId, OUT_SENSOR_ID);
+  defaultSettings.displayWifiIndicator = true;
+  strcpy(defaultSettings.httpRequestInterval, defaultHttpRequestInterval);
+  strcpy(defaultSettings.sleepTouchThreshold, defaultSleepTouchThreshold);
+  strcpy(defaultSettings.screenBrightness, defaultScreenBrightness);
+  defaultSettings.invertScreen = false;
+  defaultSettings.debugMode = false;
+
+  return defaultSettings;
+}
+
+void saveSettings(void) {
+  Serial.print("Saving configuration...");
+
+  File file = SPIFFS.open(CONFIG_FILE_NAME, "wb");
+  file.write((byte *)&deviceSettings, sizeof(deviceSettings));
+
+  Serial.println(F("\tOK!"));
+}
+
+void displayWiFiTimeout(void) {
+  display.clear();
+  display.drawString(64, 32, F("WiFi setup FAILED!"));
+  display.display();
+}
+
 void displayWiFiIcon(bool animate = false, uint8_t x = WIFI_ICON_DOT_X,
                      uint8_t y = WIFI_ICON_DOT_Y) {
+  if (!animate && !deviceSettings.displayWifiIndicator) {
+    return;
+  }
+
   long rssi = WiFi.RSSI();
 
   if ((!animate && rssi >= -67) || (animate && currentStep >= 3)) {
@@ -252,11 +291,11 @@ void sendApiRequest(AsyncHTTPRequest *request, String sensorId) {
 }
 
 void sendInTempSensorApiRequest(void) {
-  sendApiRequest(&inTempRequest, IN_SENSOR_ID);
+  sendApiRequest(&inTempRequest, deviceSettings.inSensorId);
 }
 
 void sendOutTempSensorApiRequest(void) {
-  sendApiRequest(&outTempRequest, OUT_SENSOR_ID);
+  sendApiRequest(&outTempRequest, deviceSettings.outSensorId);
 }
 
 void handleInSensorOkResponse(void *cbVoidPtr, AsyncHTTPRequest *request) {
@@ -424,7 +463,7 @@ void processLongTouch(void) {
     unsigned long currMillis = millis();
     unsigned long touchDuration = currMillis - lastTouchStart;
 
-    if (touchDuration > SLEEP_TOUCH_THRESHOLD) {
+    if (touchDuration > SLEEP_TOUCH_THRESHOLD_LONG) {
       display.clear();
       display.setFont(ArialMT_Plain_10);
       display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
@@ -502,10 +541,167 @@ void initDisplay(void) {
   Serial.println(F("\tOK!"));
 }
 
+String processor(const String &var) {
+  if (var == "IS_SETUP") {
+    return String(deviceSettings.isSetup ? "checked" : "");
+  } else if (var == "WIFI_SSID") {
+    return String(deviceSettings.wifiSsid);
+  } else if (var == "WIFI_PASSWORD") {
+    return String(deviceSettings.wifiPassword);
+  } else if (var == "HA_API") {
+    return String(deviceSettings.apiUrl);
+  } else if (var == "AUTH_TOKEN") {
+    return String(deviceSettings.authToken);
+  } else if (var == "IN_SENSOR_ID") {
+    return String(deviceSettings.inSensorId);
+  } else if (var == "OUT_SENSOR_ID") {
+    return String(deviceSettings.outSensorId);
+  } else if (var == "WIFI_ICON_STATE") {
+    return String(deviceSettings.displayWifiIndicator ? "checked" : "");
+  } else if (var == "HTTP_REQUEST_INTERVAL") {
+    return String(deviceSettings.httpRequestInterval);
+  } else if (var == "LONG_TOUCH_SELECTED") {
+    return String(strcmp(deviceSettings.sleepTouchThreshold, "long") == 0
+                      ? "selected"
+                      : "");
+  } else if (var == "MEDIUM_TOUCH_SELECTED") {
+    return String(strcmp(deviceSettings.sleepTouchThreshold, "medium") == 0
+                      ? "selected"
+                      : "");
+  } else if (var == "SHORT_TOUCH_SELECTED") {
+    return String(strcmp(deviceSettings.sleepTouchThreshold, "short") == 0
+                      ? "selected"
+                      : "");
+  } else if (var == "HIGH_BRIGHTNESS_SELECTED") {
+    return String(
+        strcmp(deviceSettings.screenBrightness, "high") == 0 ? "selected" : "");
+  } else if (var == "MEDIUM_BRIGHTNESS_SELECTED") {
+    return String(strcmp(deviceSettings.screenBrightness, "medium") == 0
+                      ? "selected"
+                      : "");
+  } else if (var == "DIM_BRIGHTNESS_SELECTED") {
+    return String(
+        strcmp(deviceSettings.screenBrightness, "dim") == 0 ? "selected" : "");
+  } else if (var == "INVERT_SCREEN") {
+    return String(deviceSettings.invertScreen ? "checked" : "");
+  } else if (var == "ENABLE_DEBUG") {
+    return String(deviceSettings.debugMode ? "checked" : "");
+  } else if (var == "SETUP_STATE") {
+    return String(
+        deviceSettings.isSetup
+            ? "is successfully set up!"
+            : "is not set up! Please fill out the form below to start.");
+  } else if (var == "DEBUG_MODE_STYLING") {
+    return String(deviceSettings.debugMode ? "" : " style=\"display:none\"");
+  }
+
+  return String();
+}
+
 void setupWebServer(void) {
   Serial.print("Starting HTTP server...");
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SPIFFS, "/index.html", "text/html");
+    request->send(SPIFFS, "/index.html", "text/html", false, processor);
+  });
+  server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(SPIFFS, "/style.css", "text/css");
+  });
+  server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (request->hasParam("resetChip", true)) {
+      DeviceSettings defaultSettings = getDefaultSettings();
+      deviceSettings = defaultSettings;
+    } else {
+      if (request->hasParam("wifiSsid", true)) {
+        AsyncWebParameter *p = request->getParam("wifiSsid", true);
+        String v = p->value();
+
+        strcpy(deviceSettings.wifiSsid, v.c_str());
+      } else {
+        strcpy(deviceSettings.wifiSsid, "");
+      }
+      if (request->hasParam("wifiPassword", true)) {
+        AsyncWebParameter *p = request->getParam("wifiPassword", true);
+        String v = p->value();
+
+        strcpy(deviceSettings.wifiPassword, v.c_str());
+      } else {
+        strcpy(deviceSettings.wifiPassword, "");
+      }
+
+      if (request->hasParam("apiUrl", true)) {
+        AsyncWebParameter *p = request->getParam("apiUrl", true);
+        String v = p->value();
+
+        strcpy(deviceSettings.apiUrl, v.c_str());
+      } else {
+        strcpy(deviceSettings.apiUrl, "");
+      }
+      if (request->hasParam("authToken", true)) {
+        AsyncWebParameter *p = request->getParam("authToken", true);
+        String v = p->value();
+
+        strcpy(deviceSettings.authToken, v.c_str());
+      } else {
+        strcpy(deviceSettings.authToken, "");
+      }
+
+      if (request->hasParam("inSensorId", true)) {
+        AsyncWebParameter *p = request->getParam("inSensorId", true);
+        String v = p->value();
+
+        strcpy(deviceSettings.inSensorId, v.c_str());
+      } else {
+        strcpy(deviceSettings.inSensorId, "");
+      }
+      if (request->hasParam("outSensorId", true)) {
+        AsyncWebParameter *p = request->getParam("outSensorId", true);
+        String v = p->value();
+
+        strcpy(deviceSettings.outSensorId, v.c_str());
+      } else {
+        strcpy(deviceSettings.outSensorId, "");
+      }
+
+      if (request->hasParam("httpRequestInterval", true)) {
+        AsyncWebParameter *p = request->getParam("httpRequestInterval", true);
+        String v = p->value();
+
+        strcpy(deviceSettings.httpRequestInterval, v.c_str());
+      } else {
+        strcpy(deviceSettings.httpRequestInterval, defaultHttpRequestInterval);
+      }
+      if (request->hasParam("sleepTouchThreshold", true)) {
+        AsyncWebParameter *p = request->getParam("sleepTouchThreshold", true);
+        String v = p->value();
+
+        if (v == "long" || v == "medium" || v == "short") {
+          strcpy(deviceSettings.sleepTouchThreshold, v.c_str());
+        } else {
+          strcpy(deviceSettings.sleepTouchThreshold, defaultSleepTouchThreshold);
+        }
+      }
+      if (request->hasParam("screenBrightness", true)) {
+        AsyncWebParameter *p = request->getParam("screenBrightness", true);
+        String v = p->value();
+
+        if (v == "dim" || v == "medium" || v == "high") {
+          strcpy(deviceSettings.screenBrightness, v.c_str());
+        } else {
+          strcpy(deviceSettings.screenBrightness, defaultScreenBrightness);
+        }
+      }
+
+      // update booleans
+      deviceSettings.displayWifiIndicator =
+          request->hasParam("displayWifiIndicator", true);
+      deviceSettings.invertScreen = request->hasParam("invertScreen", true);
+      deviceSettings.debugMode = request->hasParam("debugMode", true);
+      deviceSettings.isSetup = request->hasParam("isSetup", true);
+    } 
+
+    saveSettings();
+
+    request->redirect("/");
   });
 
   server.onNotFound(handleNotFound);
@@ -540,21 +736,7 @@ void initDeviceSettings(void) {
   // default config does not exist, dump it!
   if (!SPIFFS.exists(CONFIG_FILE_NAME)) {
     Serial.print("Default config doesn't exist, creating...");
-    DeviceSettings defaultSettings;
-    defaultSettings.isSetup = false;
-    defaultSettings.wifiSsid = strndup(SSID, strlen(SSID));
-    defaultSettings.wifiPassword = strndup(PASSWORD, strlen(PASSWORD));
-    defaultSettings.apiUrl = strndup(API_URL, strlen(API_URL));
-    defaultSettings.authToken =
-        strndup(AUTH_HEADER_TOKEN, strlen(AUTH_HEADER_TOKEN));
-    defaultSettings.inSensorId = strndup(IN_SENSOR_ID, strlen(IN_SENSOR_ID));
-    defaultSettings.outSensorId = strndup(OUT_SENSOR_ID, strlen(OUT_SENSOR_ID));
-    defaultSettings.displayWifiIndicator = true;
-    defaultSettings.httpRequestInterval = strndup("60", 3);
-    defaultSettings.sleepTouchThreshold = strndup("long", 5);
-    defaultSettings.screenBrightness = strndup("dim", 4);
-    defaultSettings.invertScreen = false;
-    defaultSettings.debugMode = false;
+    DeviceSettings defaultSettings = getDefaultSettings();
 
     File file = SPIFFS.open(CONFIG_FILE_NAME, "wb");
 
@@ -570,11 +752,6 @@ void initDeviceSettings(void) {
     file.read((byte *)&deviceSettings, sizeof(deviceSettings));
 
     Serial.println(F("\tOK!"));
-
-    Serial.print("SSID: ");
-    Serial.println(deviceSettings.wifiSsid);
-    Serial.print("displayWifiIndicator: ");
-    Serial.println(deviceSettings.displayWifiIndicator);
   }
 }
 
@@ -620,9 +797,6 @@ void setup(void) {
   }
 
   initDeviceSettings();
-
-  Serial.print("Is setup: ");
-  Serial.println(deviceSettings.isSetup);
 
   if (esp_sleep_enable_touchpad_wakeup() == ESP_OK) {
     touchAttachInterrupt(TOUCH_PIN, touchInterruptCb, TOUCH_TRESHOLD);
